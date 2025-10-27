@@ -1,0 +1,109 @@
+// Firestore Security Rules
+// Copy these rules to your Firebase Console > Firestore Database > Rules
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Users can only read/write their own data
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    
+    // Officials can read/write their own data
+    match /officials/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    
+    // Complaints - authenticated users can read/write
+    match /complaints/{cid} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Scheme Applications - authenticated users can read/write
+    match /schemeApplications/{aid} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Schemes - anyone can read, only authenticated users can write
+    match /schemes/{sid} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Payments - users can only access their own payments
+    match /payments/{pid} {
+      allow read, write: if request.auth != null && 
+        (resource.data.userId == request.auth.uid || 
+         request.auth.uid in resource.data.userId);
+    }
+    
+    // Documents - users can only access their own documents
+    match /documents/{did} {
+      allow read, write: if request.auth != null && 
+        (resource.data.userId == request.auth.uid || 
+         request.auth.uid in resource.data.userId);
+    }
+    
+    // Children - users can only access their own children data
+    match /children/{cid} {
+      allow read, write: if request.auth != null && 
+        (resource.data.userId == request.auth.uid || 
+         request.auth.uid in resource.data.userId);
+    }
+    
+    // Teacher Resources - anyone can read, authenticated users can write
+    match /teacherResources/{rid} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Citizen Feedback - anyone can read, authenticated users can write
+    match /citizenFeedback/{fid} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Blood Donors - anyone can read, authenticated users can write
+    match /bloodDonors/{bid} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Organ Donors - anyone can read, authenticated users can write
+    match /organDonors/{oid} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Blood Requests - anyone can read, authenticated users can write
+    match /bloodRequests/{rid} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Organ Requests - anyone can read, authenticated users can write
+    match /organRequests/{rid} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Scholarship Applications - authenticated users can read/write
+    match /scholarshipApplications/{sid} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Default rule - deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+// Additional Security Considerations:
+// 1. Enable Firebase Authentication
+// 2. Set up proper user roles and permissions
+// 3. Consider implementing admin-only collections
+// 4. Add data validation rules
+// 5. Monitor access logs regularly
+// 6. Implement rate limiting for production use

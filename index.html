@@ -12,6 +12,7 @@
     <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-storage-compat.js"></script>
     
     <script src="firebase.js"></script>
+    <script src="firestore-sample-data.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
@@ -21,6 +22,11 @@
             <div class="loader-spinner"></div>
             <p id="firebase-status-text">Connecting to Firebase...</p>
         </div>
+    </div>
+    
+    <!-- Firebase Connection Indicator -->
+    <div id="firebase-connection-indicator" class="firebase-connection-indicator firebase-disconnected">
+        🔴 Disconnected
     </div>
     
     <div id="app">
@@ -211,6 +217,14 @@
                     <div class="form-group">
                         <label data-i18n="officialRegister.department">Department *</label>
                         <input type="text" id="official-department" data-i18n-placeholder="officialRegister.departmentPlaceholder" placeholder="e.g., Revenue, Health" required>
+                    </div>
+                    <div class="form-group">
+                        <label data-i18n="officialRegister.role">Role Category *</label>
+                        <select id="official-role" required>
+                            <option value="">Select Role Category</option>
+                            <option value="Category 1">Category 1 - Complaint Resolution</option>
+                            <option value="Category 2">Category 2 - Verification</option>
+                        </select>
                     </div>
                     <button type="submit" class="btn-primary" data-i18n="officialRegister.registerButton">Register</button>
                 </form>
@@ -716,6 +730,11 @@
                     <h4>Your Information</h4>
                     <p><strong>Department:</strong> <span id="official-dept-display"></span></p>
                     <p><strong>Qualification:</strong> <span id="official-qual-display"></span></p>
+                </div>
+
+                <!-- Dynamic Dashboard Content -->
+                <div id="official-dashboard-content">
+                    <!-- Content will be dynamically loaded here based on official role -->
                 </div>
 
                 <div class="official-tabs">

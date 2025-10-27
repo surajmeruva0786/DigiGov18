@@ -1,3 +1,45 @@
+// Firebase Connection Test Function
+function testFirebaseConnection() {
+    console.log('Testing Firebase Connection...');
+    
+    if (typeof firebase === 'undefined') {
+        console.error('❌ Firebase SDK not loaded');
+        return false;
+    }
+    
+    if (typeof auth === 'undefined') {
+        console.error('❌ Firebase Auth not available');
+        return false;
+    }
+    
+    if (typeof db === 'undefined') {
+        console.error('❌ Firestore not available');
+        return false;
+    }
+    
+    // Test Firestore connection
+    db.collection('test').limit(1).get()
+        .then((snapshot) => {
+            console.log('✅ Firestore connection successful');
+            console.log('Test query result:', snapshot.size, 'documents');
+        })
+        .catch((error) => {
+            console.error('❌ Firestore connection failed:', error);
+        });
+    
+    return true;
+}
+
+// Make test function globally available
+window.testFirebaseConnection = testFirebaseConnection;
+
+// Auto-test connection when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(() => {
+        testFirebaseConnection();
+    }, 2000); // Wait 2 seconds for Firebase to initialize
+});
+
 let currentUser = null;
 let currentOfficial = null;
 
@@ -269,30 +311,44 @@ document.getElementById('official-register-form').addEventListener('submit', fun
     const password = document.getElementById('official-password').value;
     const qualification = document.getElementById('official-qualification').value;
     const department = document.getElementById('official-department').value;
-
+    const role = document.getElementById('official-role').value;
     
-    const officials = JSON.parse(localStorage.getItem('officials') || '[]');
-    
-    if (officials.find(o => o.email === email)) {
-        alert('Official with this email already exists');
+    if (!name || !email || !password || !qualification || !department || !role) {
+        alert('Please fill in all fields');
         return;
     }
     
-    const newOfficial = {
-        name,
-        email,
-        password,
-        qualification,
-        department,
-        createdAt: new Date().toISOString()
-    };
-    
-    officials.push(newOfficial);
-    localStorage.setItem('officials', JSON.stringify(officials));
-    
-    alert('Registration successful! Please login.');
-    showOfficialLogin();
-    document.getElementById('official-register-form').reset();
+    // Create official account with Firebase Auth
+    auth.createUserWithEmailAndPassword(email, password)
+        .then(function(userCredential) {
+            const user = userCredential.user;
+            
+            // Save official data to Firestore
+            return db.collection('officials').doc(user.uid).set({
+                name: name,
+                email: email,
+                qualification: qualification,
+                department: department,
+                role: role,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        })
+        .then(function() {
+            alert('Official registration successful! Please login with your email and password.');
+            showOfficialLogin();
+            document.getElementById('official-register-form').reset();
+        })
+        .catch(function(error) {
+            console.error('Error during official registration:', error);
+            
+            if (error.code === 'auth/email-already-in-use') {
+                alert('This email is already registered. Please login instead.');
+            } else if (error.code === 'auth/weak-password') {
+                alert('Password should be at least 6 characters.');
+            } else {
+                alert('Registration error: ' + error.message);
+            }
+        });
 });
 
 document.getElementById('official-login-form').addEventListener('submit', function(e) {
@@ -301,23 +357,48 @@ document.getElementById('official-login-form').addEventListener('submit', functi
     const email = document.getElementById('official-login-email').value;
     const password = document.getElementById('official-login-password').value;
     
-    const officials = JSON.parse(localStorage.getItem('officials') || '[]');
-    const official = officials.find(o => o.email === email && o.password === password);
-    
-    if (official) {
-        currentOfficial = official;
-        
-        const voicePreference = localStorage.getItem('voicePreference');
-        if (voicePreference === null) {
-            showVoiceSetup();
-        } else {
-            showOfficialDashboard();
-        }
-        
-        document.getElementById('official-login-form').reset();
-    } else {
-        alert('Invalid email or password');
-    }
+    // Login with Firebase Auth
+    auth.signInWithEmailAndPassword(email, password)
+        .then(function(userCredential) {
+            const user = userCredential.user;
+            
+            // Get official data from Firestore
+            return db.collection('officials').doc(user.uid).get();
+        })
+        .then(function(doc) {
+            if (doc.exists) {
+                const officialData = doc.data();
+                currentOfficial = {
+                    uid: doc.id,
+                    ...officialData
+                };
+                
+                const voicePreference = localStorage.getItem('voicePreference');
+                if (voicePreference === null) {
+                    showVoiceSetup();
+                } else {
+                    showOfficialDashboard();
+                }
+                
+                document.getElementById('official-login-form').reset();
+            } else {
+                alert('Official data not found. Please contact administrator.');
+                auth.signOut();
+            }
+        })
+        .catch(function(error) {
+            console.error('Official login error:', error);
+            
+            if (error.code === 'auth/user-not-found') {
+                alert('No official account found with this email.');
+            } else if (error.code === 'auth/wrong-password') {
+                alert('Incorrect password.');
+            } else if (error.code === 'auth/invalid-email') {
+                alert('Invalid email address.');
+            } else {
+                alert('Login error: ' + error.message);
+            }
+        });
 });
 
 function setVoicePreference(enabled) {
@@ -409,19 +490,511 @@ function displayDashboardSummary() {
 }
 
 function showOfficialDashboard() {
+    if (!currentOfficial) {
+        alert('Please login first');
+        return;
+    }
+    
+    // Update official info display
     document.getElementById('official-name-display').textContent = currentOfficial.name;
     document.getElementById('official-dept-display').textContent = currentOfficial.department;
     document.getElementById('official-qual-display').textContent = currentOfficial.qualification;
     
+    // Show role-specific dashboard
+    if (currentOfficial.role === 'Category 1') {
+        showCategory1Dashboard();
+    } else if (currentOfficial.role === 'Category 2') {
+        showCategory2Dashboard();
+    } else {
+        showGeneralOfficialDashboard();
+    }
     
     showScreen('official-dashboard-screen');
-    showOfficialTab('users');
+}
+
+function showCategory1Dashboard() {
+    // Category 1: Complaint Resolution Dashboard
+    const dashboardContent = document.getElementById('official-dashboard-content');
+    dashboardContent.innerHTML = `
+        <div class="dashboard-header">
+            <h2>📝 Complaint Resolution Dashboard</h2>
+            <p>Department: ${currentOfficial.department}</p>
+        </div>
+        
+        <div class="complaint-filters">
+            <select id="complaint-status-filter" onchange="filterComplaints()">
+                <option value="">All Status</option>
+                <option value="Submitted">Submitted</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Resolved">Resolved</option>
+                <option value="Forwarded">Forwarded</option>
+            </select>
+            <select id="complaint-department-filter" onchange="filterComplaints()">
+                <option value="">All Departments</option>
+                <option value="${currentOfficial.department}">My Department</option>
+                <option value="General">General</option>
+            </select>
+        </div>
+        
+        <div class="complaints-table-container">
+            <table class="complaints-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Citizen</th>
+                        <th>Department</th>
+                        <th>Complaint</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="complaints-table-body">
+                    <tr><td colspan="7" class="loading">Loading complaints...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="dashboard-stats">
+            <div class="stat-card">
+                <h3 id="total-complaints">0</h3>
+                <p>Total Complaints</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="pending-complaints">0</h3>
+                <p>Pending</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="resolved-complaints">0</h3>
+                <p>Resolved</p>
+            </div>
+        </div>
+    `;
+    
+    // Start real-time complaint updates
+    startRealTimeComplaintUpdates();
+}
+
+function showCategory2Dashboard() {
+    // Category 2: Verification Dashboard
+    const dashboardContent = document.getElementById('official-dashboard-content');
+    dashboardContent.innerHTML = `
+        <div class="dashboard-header">
+            <h2>✅ Verification Dashboard</h2>
+            <p>Department: ${currentOfficial.department}</p>
+        </div>
+        
+        <div class="verification-filters">
+            <select id="verification-status-filter" onchange="filterVerifications()">
+                <option value="">All Status</option>
+                <option value="Pending Verification">Pending Verification</option>
+                <option value="Verified">Verified</option>
+                <option value="Rejected">Rejected</option>
+            </select>
+        </div>
+        
+        <div class="verifications-table-container">
+            <table class="verifications-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Type</th>
+                        <th>Applicant</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="verifications-table-body">
+                    <tr><td colspan="6" class="loading">Loading verifications...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="dashboard-stats">
+            <div class="stat-card">
+                <h3 id="total-verifications">0</h3>
+                <p>Total Verifications</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="pending-verifications">0</h3>
+                <p>Pending</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="verified-count">0</h3>
+                <p>Verified</p>
+            </div>
+        </div>
+    `;
+    
+    // Start real-time verification updates
+    startRealTimeVerificationUpdates();
+}
+
+function showGeneralOfficialDashboard() {
+    // General dashboard for other roles
+    const dashboardContent = document.getElementById('official-dashboard-content');
+    dashboardContent.innerHTML = `
+        <div class="dashboard-header">
+            <h2>🏛️ Official Dashboard</h2>
+            <p>Department: ${currentOfficial.department}</p>
+        </div>
+        
+        <div class="general-stats">
+            <div class="stat-card">
+                <h3>Welcome</h3>
+                <p>${currentOfficial.name}</p>
+            </div>
+            <div class="stat-card">
+                <h3>Department</h3>
+                <p>${currentOfficial.department}</p>
+            </div>
+            <div class="stat-card">
+                <h3>Role</h3>
+                <p>${currentOfficial.role}</p>
+            </div>
+        </div>
+    `;
 }
 
 function logout() {
-    currentUser = null;
-    currentOfficial = null;
-    showHome();
+    // Sign out from Firebase Auth
+    auth.signOut().then(() => {
+        currentUser = null;
+        currentOfficial = null;
+        showHome();
+    }).catch((error) => {
+        console.error('Logout error:', error);
+        // Force logout even if Firebase signout fails
+        currentUser = null;
+        currentOfficial = null;
+        showHome();
+    });
+}
+
+// Real-time Updates for Category 1 Officials
+let complaintUnsubscribe = null;
+
+function startRealTimeComplaintUpdates() {
+    // Unsubscribe from previous listener if exists
+    if (complaintUnsubscribe) {
+        complaintUnsubscribe();
+    }
+    
+    complaintUnsubscribe = db.collection('complaints')
+        .orderBy('createdAt', 'desc')
+        .onSnapshot((snapshot) => {
+            const complaints = [];
+            snapshot.forEach((doc) => {
+                complaints.push({
+                    id: doc.id,
+                    ...doc.data()
+                });
+            });
+            
+            displayComplaintsTable(complaints);
+            updateComplaintStats(complaints);
+        }, (error) => {
+            console.error('Error listening to complaints:', error);
+            document.getElementById('complaints-table-body').innerHTML = 
+                '<tr><td colspan="7" class="error">Error loading complaints</td></tr>';
+        });
+}
+
+function displayComplaintsTable(complaints) {
+    const tbody = document.getElementById('complaints-table-body');
+    
+    if (complaints.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="no-data">No complaints found</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = complaints.map(complaint => {
+        const createdAt = complaint.createdAt ? 
+            new Date(complaint.createdAt.seconds * 1000).toLocaleDateString() : 
+            'Unknown';
+        
+        const statusClass = complaint.status.toLowerCase().replace(' ', '-');
+        const complaintPreview = complaint.text.length > 50 ? 
+            complaint.text.substring(0, 50) + '...' : 
+            complaint.text;
+        
+        return `
+            <tr>
+                <td>${complaint.id.substring(0, 8)}</td>
+                <td>${complaint.userName}</td>
+                <td>${complaint.sector}</td>
+                <td title="${complaint.text}">${complaintPreview}</td>
+                <td><span class="status-badge status-${statusClass}">${complaint.status}</span></td>
+                <td>${createdAt}</td>
+                <td>
+                    <button class="btn-small btn-primary" onclick="viewComplaint('${complaint.id}')">View</button>
+                    ${complaint.status === 'Submitted' ? 
+                        `<button class="btn-small btn-success" onclick="resolveComplaint('${complaint.id}')">Resolve</button>` : 
+                        ''
+                    }
+                    ${complaint.status === 'Submitted' ? 
+                        `<button class="btn-small btn-warning" onclick="forwardComplaint('${complaint.id}')">Forward</button>` : 
+                        ''
+                    }
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function updateComplaintStats(complaints) {
+    const total = complaints.length;
+    const pending = complaints.filter(c => c.status === 'Submitted' || c.status === 'In Progress').length;
+    const resolved = complaints.filter(c => c.status === 'Resolved').length;
+    
+    document.getElementById('total-complaints').textContent = total;
+    document.getElementById('pending-complaints').textContent = pending;
+    document.getElementById('resolved-complaints').textContent = resolved;
+}
+
+function filterComplaints() {
+    const statusFilter = document.getElementById('complaint-status-filter').value;
+    const departmentFilter = document.getElementById('complaint-department-filter').value;
+    
+    // Re-query with filters
+    let query = db.collection('complaints').orderBy('createdAt', 'desc');
+    
+    if (statusFilter) {
+        query = query.where('status', '==', statusFilter);
+    }
+    
+    if (departmentFilter) {
+        query = query.where('sector', '==', departmentFilter);
+    }
+    
+    query.get().then((snapshot) => {
+        const complaints = [];
+        snapshot.forEach((doc) => {
+            complaints.push({
+                id: doc.id,
+                ...doc.data()
+            });
+        });
+        
+        displayComplaintsTable(complaints);
+    });
+}
+
+// Complaint Management Functions
+function viewComplaint(complaintId) {
+    db.collection('complaints').doc(complaintId).get().then((doc) => {
+        if (doc.exists) {
+            const complaint = doc.data();
+            const createdAt = complaint.createdAt ? 
+                new Date(complaint.createdAt.seconds * 1000).toLocaleString() : 
+                'Unknown';
+            
+            alert(`
+Complaint Details:
+ID: ${complaintId}
+Citizen: ${complaint.userName}
+Email: ${complaint.userEmail}
+Phone: ${complaint.userPhone}
+Department: ${complaint.sector}
+Status: ${complaint.status}
+Date: ${createdAt}
+
+Complaint:
+${complaint.text}
+            `);
+        }
+    });
+}
+
+function resolveComplaint(complaintId) {
+    const resolution = prompt('Enter resolution details:');
+    if (!resolution) return;
+    
+    db.collection('complaints').doc(complaintId).update({
+        status: 'Resolved',
+        resolution: resolution,
+        resolvedBy: currentOfficial.name,
+        resolvedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(() => {
+        alert('Complaint resolved successfully!');
+    }).catch((error) => {
+        console.error('Error resolving complaint:', error);
+        alert('Error resolving complaint. Please try again.');
+    });
+}
+
+function forwardComplaint(complaintId) {
+    const forwardTo = prompt('Forward to department:');
+    if (!forwardTo) return;
+    
+    db.collection('complaints').doc(complaintId).update({
+        status: 'Forwarded',
+        forwardedTo: forwardTo,
+        forwardedBy: currentOfficial.name,
+        forwardedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(() => {
+        alert('Complaint forwarded successfully!');
+    }).catch((error) => {
+        console.error('Error forwarding complaint:', error);
+        alert('Error forwarding complaint. Please try again.');
+    });
+}
+
+// Real-time Updates for Category 2 Officials
+let verificationUnsubscribe = null;
+
+function startRealTimeVerificationUpdates() {
+    // Unsubscribe from previous listener if exists
+    if (verificationUnsubscribe) {
+        verificationUnsubscribe();
+    }
+    
+    verificationUnsubscribe = db.collection('schemeApplications')
+        .orderBy('appliedAt', 'desc')
+        .onSnapshot((snapshot) => {
+            const verifications = [];
+            snapshot.forEach((doc) => {
+                verifications.push({
+                    id: doc.id,
+                    ...doc.data()
+                });
+            });
+            
+            displayVerificationsTable(verifications);
+            updateVerificationStats(verifications);
+        }, (error) => {
+            console.error('Error listening to verifications:', error);
+            document.getElementById('verifications-table-body').innerHTML = 
+                '<tr><td colspan="6" class="error">Error loading verifications</td></tr>';
+        });
+}
+
+function displayVerificationsTable(verifications) {
+    const tbody = document.getElementById('verifications-table-body');
+    
+    if (verifications.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="no-data">No verifications found</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = verifications.map(verification => {
+        const appliedAt = verification.appliedAt ? 
+            new Date(verification.appliedAt.seconds * 1000).toLocaleDateString() : 
+            'Unknown';
+        
+        const statusClass = verification.status.toLowerCase().replace(' ', '-');
+        
+        return `
+            <tr>
+                <td>${verification.id.substring(0, 8)}</td>
+                <td>Scheme Application</td>
+                <td>${verification.userName}</td>
+                <td><span class="status-badge status-${statusClass}">${verification.status}</span></td>
+                <td>${appliedAt}</td>
+                <td>
+                    <button class="btn-small btn-primary" onclick="viewVerification('${verification.id}')">View</button>
+                    ${verification.status === 'Submitted' ? 
+                        `<button class="btn-small btn-success" onclick="verifyApplication('${verification.id}')">Verify</button>` : 
+                        ''
+                    }
+                    ${verification.status === 'Submitted' ? 
+                        `<button class="btn-small btn-danger" onclick="rejectApplication('${verification.id}')">Reject</button>` : 
+                        ''
+                    }
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function updateVerificationStats(verifications) {
+    const total = verifications.length;
+    const pending = verifications.filter(v => v.status === 'Submitted').length;
+    const verified = verifications.filter(v => v.status === 'Verified').length;
+    
+    document.getElementById('total-verifications').textContent = total;
+    document.getElementById('pending-verifications').textContent = pending;
+    document.getElementById('verified-count').textContent = verified;
+}
+
+function filterVerifications() {
+    const statusFilter = document.getElementById('verification-status-filter').value;
+    
+    let query = db.collection('schemeApplications').orderBy('appliedAt', 'desc');
+    
+    if (statusFilter) {
+        query = query.where('status', '==', statusFilter);
+    }
+    
+    query.get().then((snapshot) => {
+        const verifications = [];
+        snapshot.forEach((doc) => {
+            verifications.push({
+                id: doc.id,
+                ...doc.data()
+            });
+        });
+        
+        displayVerificationsTable(verifications);
+    });
+}
+
+// Verification Management Functions
+function viewVerification(verificationId) {
+    db.collection('schemeApplications').doc(verificationId).get().then((doc) => {
+        if (doc.exists) {
+            const verification = doc.data();
+            const appliedAt = verification.appliedAt ? 
+                new Date(verification.appliedAt.seconds * 1000).toLocaleString() : 
+                'Unknown';
+            
+            alert(`
+Application Details:
+ID: ${verificationId}
+Applicant: ${verification.userName}
+Email: ${verification.userEmail}
+Phone: ${verification.userPhone}
+Scheme ID: ${verification.schemeId}
+Status: ${verification.status}
+Applied: ${appliedAt}
+            `);
+        }
+    });
+}
+
+function verifyApplication(verificationId) {
+    const verificationNotes = prompt('Enter verification notes:');
+    if (!verificationNotes) return;
+    
+    db.collection('schemeApplications').doc(verificationId).update({
+        status: 'Verified',
+        verificationNotes: verificationNotes,
+        verifiedBy: currentOfficial.name,
+        verifiedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(() => {
+        alert('Application verified successfully!');
+    }).catch((error) => {
+        console.error('Error verifying application:', error);
+        alert('Error verifying application. Please try again.');
+    });
+}
+
+function rejectApplication(verificationId) {
+    const rejectionReason = prompt('Enter rejection reason:');
+    if (!rejectionReason) return;
+    
+    db.collection('schemeApplications').doc(verificationId).update({
+        status: 'Rejected',
+        rejectionReason: rejectionReason,
+        rejectedBy: currentOfficial.name,
+        rejectedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(() => {
+        alert('Application rejected.');
+    }).catch((error) => {
+        console.error('Error rejecting application:', error);
+        alert('Error rejecting application. Please try again.');
+    });
 }
 
 const stateMapping = {
@@ -474,18 +1047,84 @@ function initializeDepartments() {
 }
 
 function showGovernmentSchemes() {
-    initializeSchemesData();
+    if (!currentUser) {
+        alert('Please login first');
+        return;
+    }
+    
+    // Get user's state from Firestore
+    getUserStateFromFirestore().then(state => {
+        document.getElementById('user-state-display').textContent = `State: ${state}`;
+        loadSchemesFromFirestore(state);
+    }).catch(error => {
+        console.error('Error getting user state:', error);
+        // Fallback to localStorage method
     const state = getStateFromAadhaar(currentUser.aadhaar);
     document.getElementById('user-state-display').textContent = `State: ${state}`;
+        loadSchemesFromFirestore(state);
+    });
     
-    displaySchemes();
     showScreen('government-schemes-screen');
+}
+
+// Firestore Functions for Government Schemes
+async function getUserStateFromFirestore() {
+    try {
+        const userDoc = await db.collection('users').doc(currentUser.uid).get();
+        if (userDoc.exists) {
+            const userData = userDoc.data();
+            return userData.state || getStateFromAadhaar(userData.aadhaar);
+        }
+        return 'Unknown';
+    } catch (error) {
+        console.error('Error getting user state:', error);
+        return 'Unknown';
+    }
+}
+
+async function loadSchemesFromFirestore(state) {
+    try {
+        const schemesSnapshot = await db.collection('schemes').get();
+        const schemes = [];
+        
+        schemesSnapshot.forEach(doc => {
+            const schemeData = doc.data();
+            // Include Central schemes and schemes for the user's state
+            if (schemeData.type === 'Central' || schemeData.state === state) {
+                schemes.push({
+                    id: doc.id,
+                    ...schemeData
+                });
+            }
+        });
+        
+        // If no schemes found in Firestore, load from localStorage
+        if (schemes.length === 0) {
+            console.log('No schemes found in Firestore, loading from localStorage');
+            const localSchemes = JSON.parse(localStorage.getItem('schemes') || '[]');
+            schemes.push(...localSchemes);
+        }
+        
+        // Store in localStorage for offline access
+        localStorage.setItem('schemes', JSON.stringify(schemes));
+        
+        displaySchemesFromFirestore(schemes);
+    } catch (error) {
+        console.error('Error loading schemes:', error);
+        // Fallback to localStorage
+        displaySchemes();
+    }
 }
 
 function displaySchemes(filter = '') {
     const state = getStateFromAadhaar(currentUser.aadhaar);
     const schemes = JSON.parse(localStorage.getItem('schemes') || '[]');
     const schemesList = document.getElementById('schemes-list');
+    
+    if (!schemesList) {
+        console.error('Schemes list element not found');
+        return;
+    }
     
     const filteredSchemes = schemes.filter(scheme => {
         const matchesState = scheme.type === 'Central' || scheme.type === state;
@@ -500,6 +1139,7 @@ function displaySchemes(filter = '') {
         schemesList.innerHTML = '<p style="text-align: center; color: #666;">No schemes found</p>';
         return;
     }
+    
     const applications = JSON.parse(localStorage.getItem('schemeApplications') || '[]');
     const userApplications = applications.filter(a => a.userId === currentUser.phone);
     
@@ -529,9 +1169,185 @@ function displaySchemes(filter = '') {
     }).join('');
 }
 
+function displaySchemesFromFirestore(schemes, filter = '') {
+    const schemesList = document.getElementById('schemes-list');
+    
+    const filteredSchemes = schemes.filter(scheme => {
+        const matchesSearch = filter === '' || 
+            scheme.name.toLowerCase().includes(filter.toLowerCase()) ||
+            scheme.description.toLowerCase().includes(filter.toLowerCase()) ||
+            scheme.benefits.toLowerCase().includes(filter.toLowerCase());
+        return matchesSearch;
+    });
+    
+    if (filteredSchemes.length === 0) {
+        schemesList.innerHTML = '<p style="text-align: center; color: #666;">No schemes found</p>';
+        return;
+    }
+    
+    // Get user's applications from Firestore
+    getUserSchemeApplications().then(userApplications => {
+    schemesList.innerHTML = filteredSchemes.map(scheme => {
+        const existingApplication = userApplications.find(a => a.schemeId === scheme.id);
+        let applicationButton = '';
+        
+        if (existingApplication) {
+            const statusClass = existingApplication.status.toLowerCase();
+            applicationButton = `<span class="application-status status-${statusClass}">${existingApplication.status}</span>`;
+        } else {
+                applicationButton = `<button class="btn-apply" onclick="applyForSchemeFirestore('${scheme.id}')">Apply</button>`;
+        }
+        
+        return `
+            <div class="scheme-card">
+                <h4>${scheme.name}</h4>
+                <p><strong>Description:</strong> ${scheme.description}</p>
+                <p><strong>Benefits:</strong> ${scheme.benefits}</p>
+                <p><strong>Eligibility:</strong> ${scheme.eligibility}</p>
+                <div class="scheme-card-footer">
+                    <span class="scheme-type">${scheme.type}</span>
+                    ${applicationButton}
+                </div>
+            </div>
+        `;
+    }).join('');
+    });
+}
+
+async function getUserSchemeApplications() {
+    try {
+        const applicationsSnapshot = await db.collection('schemeApplications')
+            .where('userId', '==', currentUser.uid)
+            .get();
+        
+        const applications = [];
+        applicationsSnapshot.forEach(doc => {
+            applications.push({
+                id: doc.id,
+                ...doc.data()
+            });
+        });
+        
+        return applications;
+    } catch (error) {
+        console.error('Error getting user applications:', error);
+        return [];
+    }
+}
+
+async function applyForSchemeFirestore(schemeId) {
+    try {
+        const applicationData = {
+            userId: currentUser.uid,
+            schemeId: schemeId,
+            userName: currentUser.name,
+            userEmail: currentUser.email,
+            userPhone: currentUser.phone,
+            status: 'Submitted',
+            appliedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        
+        await db.collection('schemeApplications').add(applicationData);
+        
+        alert('Application submitted successfully!');
+        loadSchemesFromFirestore(getUserStateFromFirestore());
+    } catch (error) {
+        console.error('Error applying for scheme:', error);
+        alert('Error submitting application. Please try again.');
+    }
+}
+
+// Voice search for schemes
+function startVoiceSearch() {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        alert('Voice recognition not supported in this browser. Please use Chrome or Edge.');
+        return;
+    }
+    
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-IN';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    
+    recognition.onresult = (e) => {
+        const query = e.results[0][0].transcript.toLowerCase();
+        document.getElementById('scheme-search').value = query;
+        searchSchemesFirestore(query);
+    };
+    
+    recognition.onerror = (e) => {
+        console.error('Speech recognition error:', e.error);
+    };
+    
+    recognition.start();
+}
+
+function searchSchemesFirestore(query) {
+    const schemes = JSON.parse(localStorage.getItem('schemes') || '[]');
+    displaySchemesFromFirestore(schemes, query);
+}
+
+// Quick Complaint with Firestore
+function startVoiceComplaint() {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        alert('Voice recognition not supported in this browser. Please use Chrome or Edge.');
+        return;
+    }
+    
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-IN';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    
+    recognition.onresult = (e) => {
+        const transcript = e.results[0][0].transcript;
+        document.getElementById('quick-complaint-text').value = transcript;
+    };
+    
+    recognition.onerror = (e) => {
+        console.error('Speech recognition error:', e.error);
+    };
+    
+    recognition.start();
+}
+
+async function submitQuickComplaint() {
+    const complaintText = document.getElementById('quick-complaint-text').value.trim();
+    
+    if (!complaintText) {
+        alert('Please enter your complaint');
+        return;
+    }
+    
+    try {
+        const complaintData = {
+            userId: currentUser.uid,
+            userName: currentUser.name,
+            userEmail: currentUser.email,
+            userPhone: currentUser.phone,
+            sector: 'General',
+            text: complaintText,
+            status: 'Submitted',
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        
+        await db.collection('complaints').add(complaintData);
+        
+        alert('Complaint submitted successfully!');
+        document.getElementById('quick-complaint-text').value = '';
+    } catch (error) {
+        console.error('Error submitting complaint:', error);
+        alert('Error submitting complaint. Please try again.');
+    }
+}
+
+
 function searchSchemes() {
     const searchTerm = document.getElementById('scheme-search').value;
-    displaySchemes(searchTerm);
+    const schemes = JSON.parse(localStorage.getItem('schemes') || '[]');
+    displaySchemesFromFirestore(schemes, searchTerm);
 }
 
 let recognition;
@@ -634,9 +1450,14 @@ function submitQuickComplaint() {
 }
 
 function showComplaints() {
+    if (!currentUser) {
+        alert('Please login first');
+        return;
+    }
+    
     initializeDepartments();
     displayDepartments();
-    displayUserComplaints();
+    loadUserComplaintsFromFirestore();
     showScreen('complaints-screen');
 }
 
@@ -666,6 +1487,119 @@ function cancelComplaint() {
     document.getElementById('complaint-description').value = '';
 }
 
+// Firestore Functions for Complaints
+async function loadUserComplaintsFromFirestore() {
+    try {
+        const complaintsSnapshot = await db.collection('complaints')
+            .where('userId', '==', currentUser.uid)
+            .get();
+        
+        const complaints = [];
+        complaintsSnapshot.forEach(doc => {
+            complaints.push({
+                id: doc.id,
+                ...doc.data()
+            });
+        });
+        
+        displayUserComplaintsFromFirestore(complaints);
+    } catch (error) {
+        console.error('Error loading complaints:', error);
+        // Fallback to localStorage
+        displayUserComplaints();
+    }
+}
+
+function displayUserComplaints() {
+    const complaints = JSON.parse(localStorage.getItem('complaints') || '[]');
+    const userComplaints = complaints.filter(c => c.userId === currentUser.phone);
+    const complaintsItems = document.getElementById('complaints-items');
+    
+    if (!complaintsItems) return;
+    
+    if (userComplaints.length === 0) {
+        complaintsItems.innerHTML = '<p style="text-align: center; color: #666;">No complaints filed yet</p>';
+        return;
+    }
+    
+    complaintsItems.innerHTML = userComplaints.map(complaint => `
+        <div class="complaint-item">
+            <h4>Complaint ID: ${complaint.id}</h4>
+            <p><strong>Department:</strong> ${complaint.department}</p>
+            <p><strong>Description:</strong> ${complaint.description}</p>
+            <p><strong>Date:</strong> ${new Date(complaint.createdAt).toLocaleString()}</p>
+            <span class="complaint-status status-${complaint.status.toLowerCase()}">${complaint.status}</span>
+        </div>
+    `).join('');
+}
+
+function displayUserComplaintsFromFirestore(complaints) {
+    const complaintsItems = document.getElementById('complaints-items');
+    
+    if (complaints.length === 0) {
+        complaintsItems.innerHTML = '<p style="text-align: center; color: #666;">No complaints found</p>';
+        return;
+    }
+    
+    complaintsItems.innerHTML = complaints.map(complaint => {
+        const statusClass = complaint.status.toLowerCase();
+        const createdAt = complaint.createdAt ? 
+            new Date(complaint.createdAt.seconds * 1000).toLocaleDateString() : 
+            'Unknown';
+        
+        return `
+            <div class="complaint-item">
+                <div class="complaint-header">
+                    <h4>${complaint.sector}</h4>
+                    <span class="complaint-status status-${statusClass}">${complaint.status}</span>
+                </div>
+                <p class="complaint-text">${complaint.text}</p>
+                <div class="complaint-footer">
+                    <span class="complaint-date">${createdAt}</span>
+                    <span class="complaint-id">ID: ${complaint.id.substring(0, 8)}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function submitComplaintFirestore() {
+    const complaintText = document.getElementById('complaint-description').value.trim();
+    
+    if (!complaintText) {
+        alert('Please enter your complaint');
+        return;
+    }
+    
+    if (!selectedDept) {
+        alert('Please select a department');
+        return;
+    }
+    
+    try {
+        const complaintData = {
+            userId: currentUser.uid,
+            userName: currentUser.name,
+            userEmail: currentUser.email,
+            userPhone: currentUser.phone,
+            sector: selectedDept,
+            text: complaintText,
+            status: 'Submitted',
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        
+        await db.collection('complaints').add(complaintData);
+        
+        alert('Complaint submitted successfully!');
+        document.getElementById('complaint-description').value = '';
+        cancelComplaint();
+        loadUserComplaintsFromFirestore();
+    } catch (error) {
+        console.error('Error submitting complaint:', error);
+        alert('Error submitting complaint. Please try again.');
+    }
+}
+
 function startVoiceComplaintForm() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
         alert('Voice recognition not supported in this browser. Please use Chrome or Edge.');
@@ -690,84 +1624,600 @@ function startVoiceComplaintForm() {
     recognition.start();
 }
 
-document.getElementById('complaint-form').addEventListener('submit', function(e) {
+// Update complaint form submission
+document.addEventListener('DOMContentLoaded', function() {
+    const complaintForm = document.getElementById('complaint-form');
+    if (complaintForm) {
+        complaintForm.addEventListener('submit', function(e) {
     e.preventDefault();
-    
-    const description = document.getElementById('complaint-description').value.trim();
-    
-    if (!description) {
-        alert('Please enter complaint description');
-        return;
-    }
-    
-    const complaints = JSON.parse(localStorage.getItem('complaints') || '[]');
-    const complaintId = 'C' + Date.now();
-    
-    
-    const newComplaint = {
-        id: complaintId,
-        userId: currentUser.phone,
-        department: selectedDept,
-        description: description,
-        status: 'Pending',
-        createdAt: new Date().toISOString()
-    };
-    
-    complaints.push(newComplaint);
-    localStorage.setItem('complaints', JSON.stringify(complaints));
-    
-    
-    if (typeof syncComplaintToGoogleSheets === 'function') {
-        syncComplaintToGoogleSheets(newComplaint).then(result => {
-            if (result.success) {
-                console.log('Complaint synced to Google Sheets');
-            } else {
-                console.log('Google Sheets sync failed:' , result.reason || result.error);
-            }
-        }).catch(err => {
-            console.log('Google Sheets sync error:' , err);
+            submitComplaintFirestore();
         });
     }
-    alert('Complaint submitted successfully! ID: ' + complaintId);
-    
-    cancelComplaint();
-    displayUserComplaints();
 });
-
-function displayUserComplaints() {
-    const complaints = JSON.parse(localStorage.getItem('complaints') || '[]');
-    const userComplaints = complaints.filter(c => c.userId === currentUser.phone);
-    const complaintsItems = document.getElementById('complaints-items');
     
-    if (userComplaints.length === 0) {
-        complaintsItems.innerHTML = '<p style="text-align: center; color: #666;">No complaints filed yet</p>';
+    
+function showChildren() {
+    if (!currentUser) {
+        alert('Please login first');
         return;
     }
     
-    complaintsItems.innerHTML = userComplaints.map(complaint => `
-        <div class="complaint-item">
-            <h4>Complaint ID: ${complaint.id}</h4>
-            <p><strong>Department:</strong> ${complaint.department}</p>
-            <p><strong>Description:</strong> ${complaint.description}</p>
-            <p><strong>Date:</strong> ${new Date(complaint.createdAt).toLocaleString()}</p>
-            <span class="complaint-status status-${complaint.status.toLowerCase()}">${complaint.status}</span>
-        </div>
-    `).join('');
-}
-
-function showChildren() {
+    loadChildrenFromFirestore();
     showScreen('children-screen');
 }
 
+// Firestore Functions for Children Module
+async function loadChildrenFromFirestore() {
+    try {
+        const childrenSnapshot = await db.collection('children')
+            .where('userId', '==', currentUser.uid)
+            .orderBy('createdAt', 'desc')
+            .get();
+        
+        const children = [];
+        childrenSnapshot.forEach(doc => {
+            children.push({
+                id: doc.id,
+                ...doc.data()
+            });
+        });
+        
+        displayChildrenFromFirestore(children);
+        loadTeacherResources();
+    } catch (error) {
+        console.error('Error loading children:', error);
+        // Fallback to localStorage
+        displayChildrenList();
+    }
+}
+
+function displayChildrenFromFirestore(children) {
+    const childrenList = document.getElementById('children-list');
+    if (!childrenList) return;
+    
+    if (children.length === 0) {
+        childrenList.innerHTML = '<p style="text-align: center; color: #666;">No children added yet</p>';
+        return;
+    }
+    
+    childrenList.innerHTML = children.map(child => {
+        const createdAt = child.createdAt ? 
+            new Date(child.createdAt.seconds * 1000).toLocaleDateString() : 
+            'Unknown';
+        
+        const attendanceStreak = child.attendanceStreak || 0;
+        const vaccinationDue = child.vaccinationDue ? 
+            new Date(child.vaccinationDue.seconds * 1000).toLocaleDateString() : 
+            'Not scheduled';
+        
+        return `
+            <div class="child-card">
+                <div class="child-header">
+                    <h4>${child.name}</h4>
+                    <span class="child-age">Age: ${child.age}</span>
+                </div>
+                <div class="child-details">
+                    <p><strong>School:</strong> ${child.school}</p>
+                    <p><strong>Class:</strong> ${child.class}</p>
+                    <p><strong>Attendance Streak:</strong> ${attendanceStreak} days</p>
+                    <p><strong>Vaccination Due:</strong> ${vaccinationDue}</p>
+                </div>
+                <div class="child-actions">
+                    <button class="btn-primary" onclick="updateAttendance('${child.id}')">Mark Attendance</button>
+                    <button class="btn-secondary" onclick="viewChildResources('${child.id}')">View Resources</button>
+                    <button class="btn-warning" onclick="scheduleVaccination('${child.id}')">Schedule Vaccination</button>
+                    <button class="btn-danger" onclick="deleteChild('${child.id}')">Delete</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function addChildToFirestore() {
+    const name = document.getElementById('child-name').value.trim();
+    const age = document.getElementById('child-age').value.trim();
+    const school = document.getElementById('child-school').value.trim();
+    const childClass = document.getElementById('child-class').value.trim();
+    
+    if (!name || !age || !school || !childClass) {
+        alert('Please fill in all fields');
+        return;
+    }
+    
+    try {
+        const childData = {
+            userId: currentUser.uid,
+            userName: currentUser.name,
+            name: name,
+            age: parseInt(age),
+            school: school,
+            class: childClass,
+            attendanceStreak: 0,
+            vaccinationDue: null,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        
+        await db.collection('children').add(childData);
+        
+        alert('Child added successfully!');
+        document.getElementById('child-name').value = '';
+        document.getElementById('child-age').value = '';
+        document.getElementById('child-school').value = '';
+        document.getElementById('child-class').value = '';
+        cancelAddChild();
+        loadChildrenFromFirestore();
+        
+    } catch (error) {
+        console.error('Error adding child:', error);
+        alert('Error adding child. Please try again.');
+    }
+}
+
+async function updateAttendance(childId) {
+    try {
+        const childRef = db.collection('children').doc(childId);
+        const childDoc = await childRef.get();
+        
+        if (childDoc.exists) {
+            const currentStreak = childDoc.data().attendanceStreak || 0;
+            await childRef.update({
+                attendanceStreak: currentStreak + 1,
+                lastAttendanceDate: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            
+            alert('Attendance marked successfully!');
+            loadChildrenFromFirestore();
+        }
+    } catch (error) {
+        console.error('Error updating attendance:', error);
+        alert('Error updating attendance. Please try again.');
+    }
+}
+
+async function scheduleVaccination(childId) {
+    const vaccinationDate = prompt('Enter vaccination date (YYYY-MM-DD):');
+    if (!vaccinationDate) return;
+    
+    try {
+        const date = new Date(vaccinationDate);
+        await db.collection('children').doc(childId).update({
+            vaccinationDue: firebase.firestore.Timestamp.fromDate(date)
+        });
+        
+        alert('Vaccination scheduled successfully!');
+        loadChildrenFromFirestore();
+    } catch (error) {
+        console.error('Error scheduling vaccination:', error);
+        alert('Error scheduling vaccination. Please try again.');
+    }
+}
+
+async function deleteChild(childId) {
+    if (!confirm('Are you sure you want to delete this child record?')) {
+        return;
+    }
+    
+    try {
+        await db.collection('children').doc(childId).delete();
+        alert('Child record deleted successfully!');
+        loadChildrenFromFirestore();
+    } catch (error) {
+        console.error('Error deleting child:', error);
+        alert('Error deleting child record. Please try again.');
+    }
+}
+
+async function loadTeacherResources() {
+    try {
+        const resourcesSnapshot = await db.collection('teacherResources')
+            .orderBy('uploadedAt', 'desc')
+            .get();
+        
+        const resources = [];
+        resourcesSnapshot.forEach(doc => {
+            resources.push({
+                id: doc.id,
+                ...doc.data()
+            });
+        });
+        
+        displayTeacherResources(resources);
+    } catch (error) {
+        console.error('Error loading teacher resources:', error);
+    }
+}
+
+function displayTeacherResources(resources) {
+    const resourcesList = document.getElementById('teacher-resources-list');
+    if (!resourcesList) return;
+    
+    if (resources.length === 0) {
+        resourcesList.innerHTML = '<p style="text-align: center; color: #666;">No resources available</p>';
+        return;
+    }
+    
+    resourcesList.innerHTML = resources.map(resource => {
+        const uploadedAt = resource.uploadedAt ? 
+            new Date(resource.uploadedAt.seconds * 1000).toLocaleDateString() : 
+            'Unknown';
+        
+        return `
+            <div class="resource-item">
+                <div class="resource-header">
+                    <h4>${resource.title}</h4>
+                    <span class="resource-subject">${resource.subject}</span>
+                </div>
+                <p><strong>Description:</strong> ${resource.description}</p>
+                <p><strong>Class:</strong> ${resource.class}</p>
+                <p><strong>Uploaded:</strong> ${uploadedAt}</p>
+                <div class="resource-actions">
+                    <button class="btn-primary" onclick="downloadResource('${resource.downloadUrl}', '${resource.title}')">Download</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function downloadResource(url, title) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = title;
+    link.click();
+}
+
+function showAddChildForm() {
+    document.getElementById('add-child-form-section').style.display = 'block';
+}
+
+function cancelAddChild() {
+    document.getElementById('add-child-form-section').style.display = 'none';
+    document.getElementById('child-name').value = '';
+    document.getElementById('child-age').value = '';
+    document.getElementById('child-school').value = '';
+    document.getElementById('child-class').value = '';
+}
+
+// Update add child form submission
+document.addEventListener('DOMContentLoaded', function() {
+    const addChildForm = document.getElementById('add-child-form');
+    if (addChildForm) {
+        addChildForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            addChildToFirestore();
+        });
+    }
+});
+
 function showBillPayments() {
+    if (!currentUser) {
+        alert('Please login first');
+        return;
+    }
+    
+    loadUserPaymentsFromFirestore();
     showScreen('bill-payments-screen');
 }
 
-function showDocuments() {
-    displayUserDocuments();
-    showScreen('documents-screen');
-
+// Firestore Functions for Bill Payments
+async function loadUserPaymentsFromFirestore() {
+    try {
+        const paymentsSnapshot = await db.collection('payments')
+            .where('userId', '==', currentUser.uid)
+            .orderBy('createdAt', 'desc')
+            .get();
+        
+        const payments = [];
+        paymentsSnapshot.forEach(doc => {
+            payments.push({
+                id: doc.id,
+                ...doc.data()
+            });
+        });
+        
+        displayUserPaymentsFromFirestore(payments);
+    } catch (error) {
+        console.error('Error loading payments:', error);
+        // Fallback to localStorage
+        displayUserPayments();
+    }
 }
+
+function displayUserPaymentsFromFirestore(payments) {
+    const paymentsList = document.getElementById('user-payments-list');
+    if (!paymentsList) return;
+    
+    if (payments.length === 0) {
+        paymentsList.innerHTML = '<p style="text-align: center; color: #666;">No payments found</p>';
+        return;
+    }
+    
+    paymentsList.innerHTML = payments.map(payment => {
+        const statusClass = payment.status.toLowerCase();
+        const createdAt = payment.createdAt ? 
+            new Date(payment.createdAt.seconds * 1000).toLocaleDateString() : 
+            'Unknown';
+        
+        return `
+            <div class="payment-item">
+                <div class="payment-header">
+                    <h4>${payment.billType} Bill</h4>
+                    <span class="payment-status status-${statusClass}">${payment.status}</span>
+                </div>
+                <p><strong>Consumer Number:</strong> ${payment.consumerNumber}</p>
+                <p><strong>Amount:</strong> ₹${payment.amount}</p>
+                <p><strong>Date:</strong> ${createdAt}</p>
+                <p><strong>Transaction ID:</strong> ${payment.transactionId || 'N/A'}</p>
+            </div>
+        `;
+    }).join('');
+}
+
+let selectedBillType = '';
+
+function selectBillType(billType) {
+    selectedBillType = billType;
+    document.getElementById('selected-bill-type').textContent = billType;
+    document.getElementById('bill-payment-form-section').style.display = 'block';
+    document.getElementById('consumer-number').value = '';
+    document.getElementById('bill-amount').value = '';
+}
+
+function cancelBillPayment() {
+    selectedBillType = '';
+    document.getElementById('bill-payment-form-section').style.display = 'none';
+    document.getElementById('consumer-number').value = '';
+    document.getElementById('bill-amount').value = '';
+}
+
+async function processBillPayment() {
+    const consumerNumber = document.getElementById('consumer-number').value.trim();
+    const amount = document.getElementById('bill-amount').value.trim();
+    
+    if (!consumerNumber) {
+        alert('Please enter consumer number');
+        return;
+    }
+    
+    if (!amount || isNaN(amount) || parseFloat(amount) <= 0) {
+        alert('Please enter a valid amount');
+        return;
+    }
+    
+    // Show PIN verification
+    const pin = prompt('Enter your 4-digit PIN to proceed with payment:');
+    if (!pin || pin.length !== 4 || !/^\d+$/.test(pin)) {
+        alert('Invalid PIN. Please enter a 4-digit number.');
+        return;
+    }
+    
+    try {
+        // Create UPI payment URL
+        const upiUrl = `upi://pay?pa=govt@upi&pn=Government%20Portal&am=${amount}&cu=INR&tn=${selectedBillType}%20Bill%20Payment`;
+        
+        // Open UPI app
+        window.open(upiUrl, '_blank');
+        
+        // Save payment record to Firestore
+        const paymentData = {
+            userId: currentUser.uid,
+            userName: currentUser.name,
+            userEmail: currentUser.email,
+            userPhone: currentUser.phone,
+            billType: selectedBillType,
+            consumerNumber: consumerNumber,
+            amount: parseFloat(amount),
+        status: 'Pending',
+            transactionId: 'TXN' + Date.now(),
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        
+        await db.collection('payments').add(paymentData);
+        
+        alert('Payment initiated! Please complete the payment in your UPI app.');
+        cancelBillPayment();
+        loadUserPaymentsFromFirestore();
+        
+    } catch (error) {
+        console.error('Error processing payment:', error);
+        alert('Error processing payment. Please try again.');
+    }
+}
+
+// Update bill payment form submission
+document.addEventListener('DOMContentLoaded', function() {
+    const billPaymentForm = document.getElementById('bill-payment-form');
+    if (billPaymentForm) {
+        billPaymentForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            processBillPayment();
+        });
+    }
+});
+
+function showDocuments() {
+    if (!currentUser) {
+        alert('Please login first');
+        return;
+    }
+    
+    loadUserDocumentsFromFirestore();
+    showScreen('documents-screen');
+}
+
+// Firestore Functions for Documents
+async function loadUserDocumentsFromFirestore() {
+    try {
+        const documentsSnapshot = await db.collection('documents')
+            .where('userId', '==', currentUser.uid)
+            .orderBy('uploadedAt', 'desc')
+            .get();
+        
+        const documents = [];
+        documentsSnapshot.forEach(doc => {
+            documents.push({
+                id: doc.id,
+                ...doc.data()
+            });
+        });
+        
+        displayUserDocumentsFromFirestore(documents);
+    } catch (error) {
+        console.error('Error loading documents:', error);
+        // Fallback to localStorage
+        displayUserDocuments();
+    }
+}
+
+function displayUserDocumentsFromFirestore(documents) {
+    const documentsList = document.getElementById('user-documents-list');
+    if (!documentsList) return;
+    
+    if (documents.length === 0) {
+        documentsList.innerHTML = '<p style="text-align: center; color: #666;">No documents uploaded yet</p>';
+        return;
+    }
+    
+    documentsList.innerHTML = documents.map(doc => {
+        const uploadedAt = doc.uploadedAt ? 
+            new Date(doc.uploadedAt.seconds * 1000).toLocaleDateString() : 
+            'Unknown';
+        
+        return `
+            <div class="document-item">
+                <div class="document-header">
+                    <h4>${doc.name}</h4>
+                    <span class="document-type">${doc.type}</span>
+        </div>
+                <p><strong>Size:</strong> ${doc.size}</p>
+                <p><strong>Uploaded:</strong> ${uploadedAt}</p>
+                <div class="document-actions">
+                    <button class="btn-primary" onclick="previewDocument('${doc.downloadUrl}')">Preview</button>
+                    <button class="btn-secondary" onclick="downloadDocument('${doc.downloadUrl}', '${doc.name}')">Download</button>
+                    <button class="btn-danger" onclick="deleteDocument('${doc.id}')">Delete</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function uploadDocumentToFirestore() {
+    const fileInput = document.getElementById('document-file');
+    const documentName = document.getElementById('document-name').value.trim();
+    const documentType = document.getElementById('document-type').value;
+    
+    if (!fileInput.files[0]) {
+        alert('Please select a file to upload');
+        return;
+    }
+    
+    if (!documentName) {
+        alert('Please enter document name');
+        return;
+    }
+    
+    const file = fileInput.files[0];
+    const fileName = `${currentUser.uid}/${Date.now()}_${file.name}`;
+    
+    try {
+        // Upload file to Firebase Storage
+        const storageRef = storage.ref(fileName);
+        const uploadTask = storageRef.put(file);
+        
+        uploadTask.on('state_changed', 
+            (snapshot) => {
+                // Show upload progress
+                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                console.log('Upload progress:', progress + '%');
+            },
+            (error) => {
+                console.error('Upload error:', error);
+                alert('Error uploading file. Please try again.');
+            },
+            async () => {
+                // Upload completed
+                const downloadUrl = await uploadTask.snapshot.ref.getDownloadURL();
+                
+                // Save document metadata to Firestore
+                const documentData = {
+                    userId: currentUser.uid,
+                    userName: currentUser.name,
+                    name: documentName,
+                    type: documentType,
+                    fileName: file.name,
+                    size: formatFileSize(file.size),
+                    downloadUrl: downloadUrl,
+                    uploadedAt: firebase.firestore.FieldValue.serverTimestamp()
+                };
+                
+                await db.collection('documents').add(documentData);
+                
+                alert('Document uploaded successfully!');
+                document.getElementById('document-name').value = '';
+                document.getElementById('document-type').value = '';
+                fileInput.value = '';
+                cancelDocumentUpload();
+                loadUserDocumentsFromFirestore();
+            }
+        );
+        
+    } catch (error) {
+        console.error('Error uploading document:', error);
+        alert('Error uploading document. Please try again.');
+    }
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function previewDocument(url) {
+    window.open(url, '_blank');
+}
+
+function downloadDocument(url, name) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    link.click();
+}
+
+async function deleteDocument(documentId) {
+    if (!confirm('Are you sure you want to delete this document?')) {
+        return;
+    }
+    
+    try {
+        await db.collection('documents').doc(documentId).delete();
+        alert('Document deleted successfully!');
+        loadUserDocumentsFromFirestore();
+    } catch (error) {
+        console.error('Error deleting document:', error);
+        alert('Error deleting document. Please try again.');
+    }
+}
+
+function cancelDocumentUpload() {
+    document.getElementById('upload-document-form-section').style.display = 'none';
+    document.getElementById('document-name').value = '';
+    document.getElementById('document-type').value = '';
+    document.getElementById('document-file').value = '';
+}
+
+// Update document upload form submission
+document.addEventListener('DOMContentLoaded', function() {
+    const documentUploadForm = document.getElementById('upload-document-form');
+    if (documentUploadForm) {
+        documentUploadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            uploadDocumentToFirestore();
+        });
+    }
+});
+
 function showUploadDocumentForm() {
     document.getElementById('upload-document-form-section').style.display = 'block';
     document.getElementById('document-type').value = '';
@@ -924,7 +2374,6 @@ function deleteDocument_OLD(docId) {
     }
 }
 
-let selectedBillType
 let currentBillPayment = null;
 let currentChildId = null;
 

@@ -1,3 +1,25 @@
+// Check microphone permissions
+function checkMicrophonePermission() {
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(() => {
+                console.log('✅ Microphone permission granted');
+                return true;
+            })
+            .catch((error) => {
+                console.error('❌ Microphone permission denied:', error);
+                alert('Microphone permission is required for voice features. Please enable microphone access and refresh the page.');
+                return false;
+            });
+    } else {
+        console.error('❌ Microphone not supported in this browser');
+        return false;
+    }
+}
+
+// Make function globally available
+window.checkMicrophonePermission = checkMicrophonePermission;
+
 let voiceSettings = {
     enabled: false,
     ttsEnabled: true,
@@ -142,7 +164,9 @@ function startContinuousListening() {
         if (voiceSettings.enabled && voiceSettings.sttEnabled) {
             setTimeout(() => {
                 try {
-                    voiceRecognition.start();
+                    if (voiceRecognition && voiceRecognition.state !== 'started') {
+                        voiceRecognition.start();
+                    }
                 } catch (e) {
                     console.log('Restart failed:', e);
                 }
